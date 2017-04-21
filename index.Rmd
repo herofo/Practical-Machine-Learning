@@ -1,0 +1,101 @@
+---
+output: html_document
+---
+## Practical Machine Learning Course Project
+
+Ronald Fokkink  
+April 21, 2017  
+
+### Introduction
+Using devices such as *Jawbone Up*, *Nike FuelBand*, and *Fitbit* it is now possible to collect a large amount of data about personal activity relatively inexpensively. One thing that people regularly do, is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, we use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The goal of the project is to predict the manner in which the participants did the exercise. This is the **classe** variable in the dataset.  
+  
+### Read and clean data
+We read the dataset that contains 19,622 observations and 160 variables.
+```{r, message=F, warning=F}
+training = read.csv("pml-training.csv", stringsAsFactors = F, na.strings = c("NA", "", "#DIV/0!"))
+training$classe = as.factor(training$classe)
+dim(training)
+```
+We drop variables that don't contain physical activity data (the first 7 columns) and variables that contain NA values. This leaves 52 variables to predict the **classe** variable.
+```{r, message=F, warning=F}
+training = training[, -(1:7)]
+full = sapply(training, function(x)all(!is.na(x))) 
+training = training[, full]
+dim(training)
+```
+We split the dataset into a training set and a testing set.
+```{r, message=F, warning=F}
+library(caret)
+set.seed(3712)
+
+inTrain = createDataPartition(y = training$classe, p = .7, list = F)
+testing = training[-inTrain,]
+training = training[inTrain,]
+dim(training); dim(testing)
+```
+  
+### Linear Discriminant Analysis
+First, we build a simple model using LDA. We check the accuracy against the testing set.
+```{r, message=F, warning=F}
+set.seed(1234)
+
+mod.lda = train(classe ~., data = training, method = "lda")
+testing$pred.lda = predict(mod.lda, testing)
+confusionMatrix(testing$pred.lda, testing$classe)$overall[1]
+```
+We learn that the model is only 70.0% accurate.
+  
+### Random Forest
+Next, we build a random forest model since this method usually leads to very accurate models. To avoid runtime problems, we train the model on a small training set, contaning 8% of the original set (there are still over 1000 observations).
+```{r, message=F, warning=F}
+set.seed(6541)
+
+inSmall = createDataPartition(y = training$classe, p = .08, list = F)
+training.small = training[inSmall,]
+dim(training.small)
+```
+Now we build the model check and the accuracy against the testing set.
+```{r, message=F, warning=F}
+set.seed(1234)
+
+mod.smallset.rf = train(classe ~., data = training.small, method = "rf")
+testing$pred.smallset.rf = predict(mod.smallset.rf, testing)
+confusionMatrix(testing$pred.smallset.rf, testing$classe)$overall[1]
+```
+We learn that the model is 91.5% accurate. A considerable improvement compared to the LDA model.
+  
+We investigate whether the accuracy can be further improved by using the complete training set. To shorten runtime, we use cross validation (with 5 folds) instead of bootstrap samples.
+```{r, message=F, warning=F}
+set.seed(1234)
+
+mod.rf = train(classe ~., data = training, method = "rf",
+	trControl = trainControl(method = "cv", number = 5))
+testing$pred.rf = predict(mod.rf, testing)
+confusionMatrix(testing$pred.rf, testing$classe)$overall[1]
+```
+We learn that the model is 99.1% accurate. Again, a considerable improvement compared to the previous model and close to perfect.
+  
+However, this model has 52 predictors while we are interested in *parsimonious* models. We investigate which predictors are the most important. We know from quiz 3 how to investigate this.
+```{r, message=F, warning=F}
+varImp(mod.rf)
+```
+The first 8 predictors have a (scaled) value greater than 50. We build a random forest model using these 8 predictors only. We check the accuracy against the testing set.
+```{r, message=F, warning=F}
+set.seed(1234)
+
+mod.parsim.rf = train(classe ~ 
+	roll_belt + pitch_forearm + yaw_belt + magnet_dumbbell_z + pitch_belt + 
+	magnet_dumbbell_y + roll_forearm + magnet_dumbbell_x,
+	data = training, method = "rf",
+	trControl = trainControl(allowParallel = T, method = "cv", number = 5))
+testing$pred.parsim.rf = predict(mod.parsim.rf, testing)
+confusionMatrix(testing$pred.parsim.rf, testing$classe)$overall[1]
+```
+This model is 98.5% accurate, nearly as accurate as the prevoious model with 52 predictors.
+  
+### Conclusion
+We choose the last model to predict the test set. Note that with 98.5% accuracy, the probability of predicting at least 16 test cases correctly is 99.999% and the probability of predicting all 20 test cases correctly is 73.9%. With 99.1% accuracy, these probabilities are 99.9999% and 83.5% respectively.
+```{r, message=F, warning=F}
+test = read.csv("pml-testing.csv", stringsAsFactors = F, na.strings = c("NA", "", "#DIV/0!"))
+predict(mod.parsim.rf, test)
+```
